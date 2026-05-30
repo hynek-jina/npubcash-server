@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { PaymentSettlementService } from "../paymentSettlement";
 import * as lightningUtils from "../../utils/lightning";
+import { PaymentSettlementService } from "../paymentSettlement";
 
 const walletMock = vi.hoisted(() => ({
   loadMint: vi.fn(),
@@ -230,7 +230,10 @@ describe("PaymentSettlementService", () => {
       quoteId: "quote-id",
     });
     expect(userMintWallet.loadMint).toHaveBeenCalled();
-    expect(userMintWallet.mintProofsBolt11).toHaveBeenCalledWith(21, "quote-id");
+    expect(userMintWallet.mintProofsBolt11).toHaveBeenCalledWith(
+      21,
+      "quote-id",
+    );
     expect(claimModelMock.createClaims).toHaveBeenCalledWith(
       "testUser",
       "https://user-mint.example",

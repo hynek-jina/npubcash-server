@@ -149,9 +149,7 @@ const normalizeMintQuoteState = (value: string | null | undefined): string => {
     .toLowerCase();
 };
 
-export const isMintQuotePaid = (value: {
-  state?: string | null;
-}): boolean => {
+export const isMintQuotePaid = (value: { state?: string | null }): boolean => {
   return normalizeMintQuoteState(value.state) === "paid";
 };
 

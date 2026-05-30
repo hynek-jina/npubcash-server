@@ -195,11 +195,14 @@ export class PaymentSettlementService {
         state: readCashuTsQuoteState(quote),
       };
     } catch (error) {
-      console.warn("Mint quote state via cashu-ts failed; trying direct v1 endpoint", {
-        error,
-        mintUrl: transaction.mint_url,
-        quoteId: transaction.cashu_quote_id,
-      });
+      console.warn(
+        "Mint quote state via cashu-ts failed; trying direct v1 endpoint",
+        {
+          error,
+          mintUrl: transaction.mint_url,
+          quoteId: transaction.cashu_quote_id,
+        },
+      );
 
       return requestMintQuoteState({
         mintUrl: transaction.mint_url || process.env.MINTURL!,
