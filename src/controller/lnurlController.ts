@@ -7,8 +7,8 @@ import { getWallet } from "../config";
 import { Transaction, User } from "../models";
 import { PaymentSettlementService } from "../services/paymentSettlement";
 import { Analyzer } from "../utils/analytics";
-import { createLnurlResponse } from "../utils/lnurl";
 import { requestMintQuoteBolt11 } from "../utils/lightning";
+import { createLnurlResponse } from "../utils/lnurl";
 import { decodeAndValidateZapRequest } from "../utils/nostr";
 
 interface MintQuoteResult {
@@ -90,12 +90,18 @@ export async function lnurlController(
       });
     } else {
       try {
-        quote = await wallet.createMintQuoteBolt11(quoteAmount, "Cashu Address");
+        quote = await wallet.createMintQuoteBolt11(
+          quoteAmount,
+          "Cashu Address",
+        );
       } catch (error) {
-        console.warn("Mint quote via cashu-ts failed; trying direct v1 endpoint", {
-          error,
-          mintUrl,
-        });
+        console.warn(
+          "Mint quote via cashu-ts failed; trying direct v1 endpoint",
+          {
+            error,
+            mintUrl,
+          },
+        );
         quote = await requestMintQuoteBolt11({
           amountSat: quoteAmount,
           mintUrl,

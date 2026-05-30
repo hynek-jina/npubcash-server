@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import app from "../../app";
 import { getWallet } from "../../config";
 import { Transaction, User } from "../../models";
-import { createLnurlResponse } from "../../utils/lnurl";
 import * as lightningUtils from "../../utils/lightning";
+import { createLnurlResponse } from "../../utils/lnurl";
 import { decodeAndValidateZapRequest } from "../../utils/nostr";
 
 vi.mock("../../models/user.ts");

@@ -4,6 +4,7 @@ interface MintQuoteResponse {
   expiry: number | null;
   quote: string;
   request: string;
+  state?: string;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
@@ -90,3 +91,72 @@ export async function requestMintQuoteBolt11(args: {
     request,
   };
 }
+
+export async function requestMintQuoteState(args: {
+  mintUrl: string;
+  quoteId: string;
+}): Promise<MintQuoteResponse> {
+  const targetUrl = `${args.mintUrl.replace(/\/+$/, "")}/v1/mint/quote/bolt11/${encodeURIComponent(args.quoteId)}`;
+
+  const response = await fetch(targetUrl, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Mint quote check HTTP ${response.status}`);
+  }
+
+  const rawText = await response.text();
+  let payload: Record<string, unknown> | null = null;
+  try {
+    const parsed: unknown = rawText ? JSON.parse(rawText) : null;
+    payload = isRecord(parsed) ? parsed : null;
+  } catch {
+    throw new Error(
+      `Mint quote check parse failed (${response.status}): ${rawText.slice(0, 200)}`,
+    );
+  }
+
+  const quote = String(payload?.quote ?? payload?.id ?? args.quoteId).trim();
+  const request = String(
+    payload?.request ?? payload?.pr ?? payload?.paymentRequest ?? "",
+  ).trim();
+  const state = String(payload?.state ?? payload?.status ?? "").trim();
+  const expiryValue = payload?.expiry;
+  const expiry =
+    typeof expiryValue === "number" && Number.isFinite(expiryValue)
+      ? expiryValue
+      : null;
+
+  if (!quote) {
+    throw new Error(`Missing mint quote state (quote=${args.quoteId})`);
+  }
+
+  return {
+    expiry,
+    quote,
+    request,
+    state,
+  };
+}
+
+const normalizeMintQuoteState = (value: string | null | undefined): string => {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
+};
+
+export const isMintQuotePaid = (value: {
+  state?: string | null;
+}): boolean => {
+  return normalizeMintQuoteState(value.state) === "paid";
+};
+
+export const isMintQuoteIssued = (value: {
+  state?: string | null;
+}): boolean => {
+  return normalizeMintQuoteState(value.state) === "issued";
+};

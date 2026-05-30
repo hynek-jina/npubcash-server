@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PaymentSettlementService } from "../paymentSettlement";
+import * as lightningUtils from "../../utils/lightning";
 
 const walletMock = vi.hoisted(() => ({
+  loadMint: vi.fn(),
   on: {
     onceMintPaid: vi.fn(),
   },
@@ -76,6 +78,7 @@ describe("PaymentSettlementService", () => {
   it("settles a websocket paid event by minting proofs and fulfilling once", async () => {
     const tx = transaction();
     const proofs = [{ id: "keyset", amount: 21, secret: "s", C: "c" }];
+    walletMock.loadMint.mockResolvedValue(undefined);
     walletMock.on.onceMintPaid.mockResolvedValue({
       quote: "quote-id",
       request: "invoice",
@@ -90,6 +93,7 @@ describe("PaymentSettlementService", () => {
       timeoutMs: 60_000,
     });
     expect(getWalletMock).toHaveBeenCalledWith("https://user-mint.example");
+    expect(walletMock.loadMint).toHaveBeenCalled();
     expect(walletMock.mintProofsBolt11).toHaveBeenCalledWith(21, "quote-id");
     expect(claimModelMock.createClaims).toHaveBeenCalledWith(
       "testUser",
@@ -128,6 +132,7 @@ describe("PaymentSettlementService", () => {
 
   it("falls back to polling when websocket watching fails", async () => {
     const tx = transaction();
+    walletMock.loadMint.mockResolvedValue(undefined);
     walletMock.on.onceMintPaid.mockRejectedValue(new Error("ws unsupported"));
     walletMock.checkMintQuoteBolt11.mockResolvedValue({
       quote: "quote-id",
@@ -146,6 +151,7 @@ describe("PaymentSettlementService", () => {
 
   it("polling ignores unpaid quotes and settles paid quotes", async () => {
     const tx = transaction();
+    walletMock.loadMint.mockResolvedValue(undefined);
     walletMock.checkMintQuoteBolt11
       .mockResolvedValueOnce({ quote: "quote-id", state: "UNPAID" })
       .mockResolvedValueOnce({ quote: "quote-id", state: "PAID" });
@@ -154,7 +160,11 @@ describe("PaymentSettlementService", () => {
       { id: "keyset", amount: 21, secret: "s", C: "c" },
     ]);
 
-    await PaymentSettlementService.getInstance().pollTransactionQuote(tx as any, 0, 2);
+    await PaymentSettlementService.getInstance().pollTransactionQuote(
+      tx as any,
+      0,
+      2,
+    );
 
     expect(walletMock.mintProofsBolt11).toHaveBeenCalledTimes(1);
     expect(transactionModelMock.setToFulfilled).toHaveBeenCalledWith(1);
@@ -163,6 +173,7 @@ describe("PaymentSettlementService", () => {
   it("uses the transaction mint wallet for websocket watching and polling", async () => {
     const tx = transaction();
     const userMintWallet = {
+      loadMint: vi.fn().mockResolvedValue(undefined),
       on: {
         onceMintPaid: vi.fn().mockRejectedValue(new Error("ws unsupported")),
       },
@@ -181,13 +192,56 @@ describe("PaymentSettlementService", () => {
     expect(userMintWallet.on.onceMintPaid).toHaveBeenCalledWith("quote-id", {
       timeoutMs: 60_000,
     });
-    expect(userMintWallet.checkMintQuoteBolt11).toHaveBeenCalledWith("quote-id");
+    expect(userMintWallet.checkMintQuoteBolt11).toHaveBeenCalledWith(
+      "quote-id",
+    );
+    expect(userMintWallet.loadMint).toHaveBeenCalled();
     expect(walletMock.on.onceMintPaid).not.toHaveBeenCalled();
     expect(walletMock.checkMintQuoteBolt11).not.toHaveBeenCalled();
   });
 
+  it("falls back to the direct v1 quote-state endpoint when cashu-ts quote checks fail", async () => {
+    const tx = transaction();
+    const userMintWallet = {
+      loadMint: vi.fn().mockResolvedValue(undefined),
+      on: {
+        onceMintPaid: vi.fn().mockRejectedValue(new Error("ws unsupported")),
+      },
+      checkMintQuoteBolt11: vi
+        .fn()
+        .mockRejectedValue(new Error("legacy check path failed")),
+      mintProofsBolt11: vi
+        .fn()
+        .mockResolvedValue([{ id: "keyset", amount: 21, secret: "s", C: "c" }]),
+    };
+    getWalletMock.mockReturnValue(userMintWallet);
+    transactionModelMock.getTransactionByQuoteId.mockResolvedValue(tx);
+    vi.spyOn(lightningUtils, "requestMintQuoteState").mockResolvedValue({
+      quote: "quote-id",
+      request: "invoice",
+      expiry: null,
+      state: "PAID",
+    });
+
+    await PaymentSettlementService.getInstance().watchTransaction(tx as any);
+
+    expect(lightningUtils.requestMintQuoteState).toHaveBeenCalledWith({
+      mintUrl: "https://user-mint.example",
+      quoteId: "quote-id",
+    });
+    expect(userMintWallet.loadMint).toHaveBeenCalled();
+    expect(userMintWallet.mintProofsBolt11).toHaveBeenCalledWith(21, "quote-id");
+    expect(claimModelMock.createClaims).toHaveBeenCalledWith(
+      "testUser",
+      "https://user-mint.example",
+      [{ id: "keyset", amount: 21, secret: "s", C: "c" }],
+      1,
+    );
+  });
+
   it("records failed payment state when minting fails", async () => {
     const tx = transaction();
+    walletMock.loadMint.mockResolvedValue(undefined);
     transactionModelMock.getTransactionByQuoteId.mockResolvedValue(tx);
     walletMock.mintProofsBolt11.mockRejectedValue(new Error("mint failed"));
 
@@ -205,6 +259,7 @@ describe("PaymentSettlementService", () => {
   it("mints and stores service revenue proofs for a paid username quote", async () => {
     const proofs = [{ id: "keyset", amount: 10, secret: "s", C: "c" }];
     serviceRevenueClaimMock.getClaimsByQuoteId.mockResolvedValue([]);
+    walletMock.loadMint.mockResolvedValue(undefined);
     walletMock.checkMintQuoteBolt11.mockResolvedValue({
       quote: "quote-id",
       state: "PAID",
@@ -219,6 +274,7 @@ describe("PaymentSettlementService", () => {
       );
 
     expect(paid).toBe(true);
+    expect(walletMock.loadMint).toHaveBeenCalled();
     expect(serviceRevenueClaimMock.createClaims).toHaveBeenCalledWith(
       "quote-id",
       "invoice",

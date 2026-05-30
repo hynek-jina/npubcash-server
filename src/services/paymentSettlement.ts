@@ -3,6 +3,11 @@ import { getWallet, wallet } from "../config";
 import { Claim, ServiceRevenueClaim, Transaction } from "../models";
 import { Analyzer } from "../utils/analytics";
 import {
+  isMintQuoteIssued,
+  isMintQuotePaid,
+  requestMintQuoteState,
+} from "../utils/lightning";
+import {
   createZapReceipt,
   extractZapRequestData,
   publishZapReceipt,
@@ -16,12 +21,26 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const readCashuTsQuoteState = (quote: MintQuoteBolt11Response): string => {
+  return String(quote.state ?? "");
+};
+
 export class PaymentSettlementService {
   private static instance: PaymentSettlementService;
   private settlingQuotes = new Set<string>();
 
   private getTransactionWallet(transaction: Transaction) {
     return getWallet(transaction.mint_url);
+  }
+
+  private async prepareWalletForMinting(
+    walletInstance: ReturnType<typeof getWallet>,
+  ) {
+    if (typeof walletInstance.loadMint !== "function") {
+      return;
+    }
+
+    await walletInstance.loadMint();
   }
 
   static getInstance() {
@@ -38,7 +57,7 @@ export class PaymentSettlementService {
       paidQuote = await transactionWallet.on.onceMintPaid(
         transaction.cashu_quote_id,
         {
-        timeoutMs: DEFAULT_WS_TIMEOUT_MS,
+          timeoutMs: DEFAULT_WS_TIMEOUT_MS,
         },
       );
     } catch (e) {
@@ -68,14 +87,15 @@ export class PaymentSettlementService {
   ) {
     const transactionWallet = this.getTransactionWallet(transaction);
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const quote = await transactionWallet.checkMintQuoteBolt11(
-        transaction.cashu_quote_id,
+      const quote = await this.readTransactionQuoteState(
+        transaction,
+        transactionWallet,
       );
-      if (quote.state === MintQuoteState.PAID) {
+      if (isMintQuotePaid({ state: quote.state })) {
         await this.settleTransactionQuote(transaction.cashu_quote_id, quote);
         return quote;
       }
-      if (quote.state === MintQuoteState.ISSUED) {
+      if (isMintQuoteIssued({ state: quote.state })) {
         return quote;
       }
       if (attempt < maxAttempts - 1) {
@@ -86,7 +106,7 @@ export class PaymentSettlementService {
 
   async settleTransactionQuote(
     quoteId: string,
-    paidQuote?: MintQuoteBolt11Response,
+    paidQuote?: MintQuoteBolt11Response | { quote: string; state?: string },
   ) {
     if (this.settlingQuotes.has(quoteId)) {
       return;
@@ -100,11 +120,13 @@ export class PaymentSettlementService {
       }
       const transactionWallet = this.getTransactionWallet(transaction);
       const quote =
-        paidQuote || (await transactionWallet.checkMintQuoteBolt11(quoteId));
-      if (quote.state !== MintQuoteState.PAID) {
+        paidQuote ||
+        (await this.readTransactionQuoteState(transaction, transactionWallet));
+      if (!isMintQuotePaid({ state: quote.state })) {
         return;
       }
       Analyzer.getInstance().logPaymentSettled(quoteId);
+      await this.prepareWalletForMinting(transactionWallet);
       const proofs = await transactionWallet.mintProofsBolt11(
         transaction.amount,
         quote.quote,
@@ -146,6 +168,7 @@ export class PaymentSettlementService {
       if (quote.state !== MintQuoteState.PAID) {
         return false;
       }
+      await this.prepareWalletForMinting(wallet);
       const proofs = await wallet.mintProofsBolt11(amount, quote.quote);
       await ServiceRevenueClaim.createClaims(
         quoteId,
@@ -156,6 +179,32 @@ export class PaymentSettlementService {
       return true;
     } finally {
       this.settlingQuotes.delete(quoteId);
+    }
+  }
+
+  private async readTransactionQuoteState(
+    transaction: Transaction,
+    transactionWallet: ReturnType<typeof getWallet>,
+  ): Promise<MintQuoteBolt11Response | { quote: string; state?: string }> {
+    try {
+      const quote = await transactionWallet.checkMintQuoteBolt11(
+        transaction.cashu_quote_id,
+      );
+      return {
+        ...quote,
+        state: readCashuTsQuoteState(quote),
+      };
+    } catch (error) {
+      console.warn("Mint quote state via cashu-ts failed; trying direct v1 endpoint", {
+        error,
+        mintUrl: transaction.mint_url,
+        quoteId: transaction.cashu_quote_id,
+      });
+
+      return requestMintQuoteState({
+        mintUrl: transaction.mint_url || process.env.MINTURL!,
+        quoteId: transaction.cashu_quote_id,
+      });
     }
   }
 
