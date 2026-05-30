@@ -1,14 +1,14 @@
-import { NextFunction, Request, Response } from "express";
-import { Event, nip19 } from "nostr-tools";
 import { MintQuoteBolt11Response } from "@cashu/cashu-ts";
 import { createHash } from "crypto";
+import { NextFunction, Request, Response } from "express";
+import { Event, nip19 } from "nostr-tools";
 
-import { wallet } from "../config";
+import { getWallet } from "../config";
 import { Transaction, User } from "../models";
+import { PaymentSettlementService } from "../services/paymentSettlement";
+import { Analyzer } from "../utils/analytics";
 import { createLnurlResponse } from "../utils/lnurl";
 import { decodeAndValidateZapRequest } from "../utils/nostr";
-import { Analyzer } from "../utils/analytics";
-import { PaymentSettlementService } from "../services/paymentSettlement";
 
 export async function lnurlController(
   req: Request<
@@ -23,6 +23,7 @@ export async function lnurlController(
   const { amount, nostr } = req.query;
   const userParam = req.params.user;
   let username: string | User | undefined;
+  let mintUrl = process.env.MINTURL!;
   let zapRequest: Event | undefined;
   if (userParam.startsWith("npub")) {
     try {
@@ -39,6 +40,7 @@ export async function lnurlController(
       return next(new Error("User not found"));
     }
     username = userObj.name;
+    mintUrl = userObj.mint_url;
   }
   if (!amount) {
     const lnurlResponse = createLnurlResponse(username);
@@ -62,6 +64,7 @@ export async function lnurlController(
     }
   }
   const quoteAmount = Math.floor(parsedAmount / 1000);
+  const wallet = getWallet(mintUrl);
   let quote: MintQuoteBolt11Response;
   try {
     if (zapRequest) {
@@ -92,6 +95,7 @@ export async function lnurlController(
       username,
       zapRequest,
       parsedAmount / 1000,
+      mintUrl,
     );
     PaymentSettlementService.getInstance().startWatchingTransaction(
       transaction,

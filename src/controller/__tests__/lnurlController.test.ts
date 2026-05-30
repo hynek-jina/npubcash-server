@@ -1,10 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
 import request from "supertest";
-import { decodeAndValidateZapRequest } from "../../utils/nostr";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import app from "../../app";
+import { getWallet } from "../../config";
 import { Transaction, User } from "../../models";
 import { createLnurlResponse } from "../../utils/lnurl";
-import { wallet } from "../../config";
+import { decodeAndValidateZapRequest } from "../../utils/nostr";
 
 vi.mock("../../models/user.ts");
 vi.mock("../../models/transaction.ts");
@@ -44,6 +44,7 @@ vi.mock("../../config.ts", () => ({
     createMintQuote: vi.fn(),
     createMintQuoteBolt11: vi.fn(),
   },
+  getWallet: vi.fn(),
 }));
 
 const settlementServiceMock = vi.hoisted(() => ({
@@ -61,6 +62,10 @@ describe("lnurlController", () => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
     process.env.NODE_ENV = "development";
+    vi.mocked(getWallet).mockReturnValue({
+      createMintQuote: vi.fn(),
+      createMintQuoteBolt11: vi.fn(),
+    });
   });
 
   it("should return 401 for invalid npub", async () => {
@@ -132,16 +137,18 @@ describe("lnurlController", () => {
       mint_url: "https://mint.minibits.cash/Bitcoin",
       pubkey: "testPubkey...",
     });
-    const createMintQuoteMock = vi
-      .mocked(wallet.createMintQuoteBolt11)
-      .mockResolvedValue({
-        quote: "quote-id",
-        request: "invoice",
-        amount: 21,
-        state: "UNPAID",
-        expiry: null,
-        unit: "sat",
-      });
+    const createMintQuoteBolt11 = vi.fn().mockResolvedValue({
+      quote: "quote-id",
+      request: "invoice",
+      amount: 21,
+      state: "UNPAID",
+      expiry: null,
+      unit: "sat",
+    });
+    vi.mocked(getWallet).mockReturnValue({
+      createMintQuote: vi.fn(),
+      createMintQuoteBolt11,
+    });
     vi.mocked(Transaction.createTransaction, {
       partial: true,
     }).mockResolvedValue({
@@ -176,13 +183,17 @@ describe("lnurlController", () => {
       "/.well-known/lnurlp/testUser?amount=21000",
     );
 
-    expect(createMintQuoteMock).toHaveBeenCalledWith(21, "Cashu Address");
+    expect(getWallet).toHaveBeenCalledWith(
+      "https://mint.minibits.cash/Bitcoin",
+    );
+    expect(createMintQuoteBolt11).toHaveBeenCalledWith(21, "Cashu Address");
     expect(Transaction.createCashuTransaction).toHaveBeenCalledWith(
       "quote-id",
       "invoice",
       "testUser",
       undefined,
       21,
+      "https://mint.minibits.cash/Bitcoin",
     );
     expect(settlementServiceMock.startWatchingTransaction).toHaveBeenCalled();
 
@@ -206,16 +217,19 @@ describe("lnurlController", () => {
       pubkey: "testPubkey...",
     });
     vi.mocked(decodeAndValidateZapRequest).mockReturnValue(zapRequest);
-    const createMintQuoteMock = vi
-      .mocked(wallet.createMintQuote)
-      .mockResolvedValue({
-        quote: "quote-id",
-        request: "invoice",
-        amount: 21,
-        state: "UNPAID",
-        expiry: null,
-        unit: "sat",
-      });
+    const createMintQuote = vi.fn().mockResolvedValue({
+      quote: "quote-id",
+      request: "invoice",
+      amount: 21,
+      state: "UNPAID",
+      expiry: null,
+      unit: "sat",
+    });
+    const createMintQuoteBolt11 = vi.fn();
+    vi.mocked(getWallet).mockReturnValue({
+      createMintQuote,
+      createMintQuoteBolt11,
+    });
     vi.mocked(Transaction.createCashuTransaction, {
       partial: true,
     }).mockResolvedValue({
@@ -238,17 +252,21 @@ describe("lnurlController", () => {
       "/.well-known/lnurlp/testUser?amount=21000&nostr=zapRequest",
     );
 
-    expect(createMintQuoteMock).toHaveBeenCalledWith("bolt11", {
+    expect(getWallet).toHaveBeenCalledWith(
+      "https://mint.minibits.cash/Bitcoin",
+    );
+    expect(createMintQuote).toHaveBeenCalledWith("bolt11", {
       amount: 21,
       description_hash: "mockedHash",
     });
-    expect(wallet.createMintQuoteBolt11).not.toHaveBeenCalled();
+    expect(createMintQuoteBolt11).not.toHaveBeenCalled();
     expect(Transaction.createCashuTransaction).toHaveBeenCalledWith(
       "quote-id",
       "invoice",
       "testUser",
       zapRequest,
       21,
+      "https://mint.minibits.cash/Bitcoin",
     );
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ pr: "invoice", routes: [] });

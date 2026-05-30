@@ -9,6 +9,8 @@ const walletMock = vi.hoisted(() => ({
   mintProofsBolt11: vi.fn(),
 }));
 
+const getWalletMock = vi.hoisted(() => vi.fn());
+
 const transactionModelMock = vi.hoisted(() => ({
   getTransactionByQuoteId: vi.fn(),
   getUnfulfilledCashuTransactions: vi.fn(),
@@ -26,6 +28,7 @@ const serviceRevenueClaimMock = vi.hoisted(() => ({
 
 vi.mock("../../config", () => ({
   wallet: walletMock,
+  getWallet: getWalletMock,
 }));
 
 vi.mock("../../models", () => ({
@@ -54,6 +57,7 @@ function transaction(overrides = {}) {
     cashu_quote_id: "quote-id",
     amount: 21,
     user: "testUser",
+    mint_url: "https://user-mint.example",
     fulfilled: false,
     zap_request: undefined,
     server_pr: "invoice",
@@ -66,6 +70,7 @@ describe("PaymentSettlementService", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubEnv("MINTURL", "https://mint.example");
+    getWalletMock.mockReturnValue(walletMock);
   });
 
   it("settles a websocket paid event by minting proofs and fulfilling once", async () => {
@@ -84,10 +89,11 @@ describe("PaymentSettlementService", () => {
     expect(walletMock.on.onceMintPaid).toHaveBeenCalledWith("quote-id", {
       timeoutMs: 60_000,
     });
+    expect(getWalletMock).toHaveBeenCalledWith("https://user-mint.example");
     expect(walletMock.mintProofsBolt11).toHaveBeenCalledWith(21, "quote-id");
     expect(claimModelMock.createClaims).toHaveBeenCalledWith(
       "testUser",
-      "https://mint.example",
+      "https://user-mint.example",
       proofs,
       1,
     );

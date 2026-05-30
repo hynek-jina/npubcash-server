@@ -1,15 +1,12 @@
-import {
-  MintQuoteBolt11Response,
-  MintQuoteState,
-} from "@cashu/cashu-ts";
-import { wallet } from "../config";
+import { MintQuoteBolt11Response, MintQuoteState } from "@cashu/cashu-ts";
+import { getWallet, wallet } from "../config";
 import { Claim, ServiceRevenueClaim, Transaction } from "../models";
+import { Analyzer } from "../utils/analytics";
 import {
   createZapReceipt,
   extractZapRequestData,
   publishZapReceipt,
 } from "../utils/nostr";
-import { Analyzer } from "../utils/analytics";
 
 const DEFAULT_WS_TIMEOUT_MS = 60_000;
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
@@ -23,6 +20,10 @@ export class PaymentSettlementService {
   private static instance: PaymentSettlementService;
   private settlingQuotes = new Set<string>();
 
+  private getTransactionWallet(transaction: Transaction) {
+    return getWallet(transaction.mint_url);
+  }
+
   static getInstance() {
     if (!PaymentSettlementService.instance) {
       PaymentSettlementService.instance = new PaymentSettlementService();
@@ -33,10 +34,9 @@ export class PaymentSettlementService {
   async watchTransaction(transaction: Transaction) {
     let paidQuote: MintQuoteBolt11Response;
     try {
-      paidQuote = await wallet.on.onceMintPaid(
-        transaction.cashu_quote_id,
-        { timeoutMs: DEFAULT_WS_TIMEOUT_MS },
-      );
+      paidQuote = await wallet.on.onceMintPaid(transaction.cashu_quote_id, {
+        timeoutMs: DEFAULT_WS_TIMEOUT_MS,
+      });
     } catch (e) {
       console.warn("Mint quote websocket failed; falling back to polling", e);
       return this.pollTransactionQuote(transaction.cashu_quote_id);
@@ -91,18 +91,20 @@ export class PaymentSettlementService {
       if (transaction.fulfilled) {
         return;
       }
-      const quote = paidQuote || (await wallet.checkMintQuoteBolt11(quoteId));
+      const transactionWallet = this.getTransactionWallet(transaction);
+      const quote =
+        paidQuote || (await transactionWallet.checkMintQuoteBolt11(quoteId));
       if (quote.state !== MintQuoteState.PAID) {
         return;
       }
       Analyzer.getInstance().logPaymentSettled(quoteId);
-      const proofs = await wallet.mintProofsBolt11(
+      const proofs = await transactionWallet.mintProofsBolt11(
         transaction.amount,
         quote.quote,
       );
       await Claim.createClaims(
         transaction.user,
-        process.env.MINTURL!,
+        transaction.mint_url || process.env.MINTURL!,
         proofs,
         transaction.id,
       );
