@@ -37,6 +37,17 @@ vi.mock("../utils/lightning", () => ({
 
 vi.mock("nostr-tools", () => ({
   SimplePool: vi.fn(),
+  nip19: {
+    decode: vi.fn((value: string) => {
+      if (value === "npubIsInvalid") {
+        throw new Error("invalid npub");
+      }
+      return {
+        type: "npub",
+        data: "decoded-pubkey-hex",
+      };
+    }),
+  },
 }));
 
 vi.mock("../../config.ts", () => ({
@@ -82,6 +93,54 @@ describe("lnurlController", () => {
 
     expect(res.status).toBe(404);
     expect(res.body).toEqual({});
+  });
+
+  it("should use the stored mint for npub aliases too", async () => {
+    vi.mocked(User.getUserByPubkey, { partial: true }).mockResolvedValue({
+      name: "testUser",
+      mint_url: "https://mint.minibits.cash/Bitcoin",
+      pubkey: "decoded-pubkey-hex",
+    });
+    const createMintQuoteBolt11 = vi.fn().mockResolvedValue({
+      quote: "quote-id",
+      request: "invoice",
+      amount: 21,
+      state: "UNPAID",
+      expiry: null,
+      unit: "sat",
+    });
+    vi.mocked(getWallet).mockReturnValue({
+      createMintQuote: vi.fn(),
+      createMintQuoteBolt11,
+    });
+    vi.mocked(Transaction.createCashuTransaction, {
+      partial: true,
+    }).mockResolvedValue({
+      id: 1,
+      mint_pr: "invoice",
+      mint_hash: "quote-id",
+      server_pr: "invoice",
+      server_hash: "quote-id",
+      cashu_quote_id: "quote-id",
+      user: "npub1testuser",
+      zap_request: undefined,
+      amount: 21,
+      fulfilled: false,
+    });
+
+    vi.stubEnv("LNURL_MIN_AMOUNT", "10");
+    vi.stubEnv("LNURL_MAX_AMOUNT", "1000000");
+
+    const res = await request(app).get(
+      "/.well-known/lnurlp/npub1testuser?amount=21000",
+    );
+
+    expect(getWallet).toHaveBeenCalledWith(
+      "https://mint.minibits.cash/Bitcoin",
+    );
+    expect(createMintQuoteBolt11).toHaveBeenCalledWith(21, "Cashu Address");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ pr: "invoice", routes: [] });
   });
 
   it("should return lnurl response if no amount provided", async () => {
