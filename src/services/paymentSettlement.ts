@@ -32,14 +32,18 @@ export class PaymentSettlementService {
   }
 
   async watchTransaction(transaction: Transaction) {
+    const transactionWallet = this.getTransactionWallet(transaction);
     let paidQuote: MintQuoteBolt11Response;
     try {
-      paidQuote = await wallet.on.onceMintPaid(transaction.cashu_quote_id, {
+      paidQuote = await transactionWallet.on.onceMintPaid(
+        transaction.cashu_quote_id,
+        {
         timeoutMs: DEFAULT_WS_TIMEOUT_MS,
-      });
+        },
+      );
     } catch (e) {
       console.warn("Mint quote websocket failed; falling back to polling", e);
-      return this.pollTransactionQuote(transaction.cashu_quote_id);
+      return this.pollTransactionQuote(transaction);
     }
     await this.settleTransactionQuote(transaction.cashu_quote_id, paidQuote);
   }
@@ -58,14 +62,17 @@ export class PaymentSettlementService {
   }
 
   async pollTransactionQuote(
-    quoteId: string,
+    transaction: Transaction,
     intervalMs = DEFAULT_POLL_INTERVAL_MS,
     maxAttempts = DEFAULT_MAX_POLL_ATTEMPTS,
   ) {
+    const transactionWallet = this.getTransactionWallet(transaction);
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const quote = await wallet.checkMintQuoteBolt11(quoteId);
+      const quote = await transactionWallet.checkMintQuoteBolt11(
+        transaction.cashu_quote_id,
+      );
       if (quote.state === MintQuoteState.PAID) {
-        await this.settleTransactionQuote(quoteId, quote);
+        await this.settleTransactionQuote(transaction.cashu_quote_id, quote);
         return quote;
       }
       if (quote.state === MintQuoteState.ISSUED) {

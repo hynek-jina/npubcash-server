@@ -8,7 +8,14 @@ import { Transaction, User } from "../models";
 import { PaymentSettlementService } from "../services/paymentSettlement";
 import { Analyzer } from "../utils/analytics";
 import { createLnurlResponse } from "../utils/lnurl";
+import { requestMintQuoteBolt11 } from "../utils/lightning";
 import { decodeAndValidateZapRequest } from "../utils/nostr";
+
+interface MintQuoteResult {
+  expiry?: number | null;
+  quote: string;
+  request: string;
+}
 
 export async function lnurlController(
   req: Request<
@@ -72,7 +79,7 @@ export async function lnurlController(
   }
   const quoteAmount = Math.floor(parsedAmount / 1000);
   const wallet = getWallet(mintUrl);
-  let quote: MintQuoteBolt11Response;
+  let quote: MintQuoteResult;
   try {
     if (zapRequest) {
       quote = await wallet.createMintQuote<MintQuoteBolt11Response>("bolt11", {
@@ -82,7 +89,18 @@ export async function lnurlController(
           .digest("hex"),
       });
     } else {
-      quote = await wallet.createMintQuoteBolt11(quoteAmount, "Cashu Address");
+      try {
+        quote = await wallet.createMintQuoteBolt11(quoteAmount, "Cashu Address");
+      } catch (error) {
+        console.warn("Mint quote via cashu-ts failed; trying direct v1 endpoint", {
+          error,
+          mintUrl,
+        });
+        quote = await requestMintQuoteBolt11({
+          amountSat: quoteAmount,
+          mintUrl,
+        });
+      }
     }
   } catch (e) {
     console.log("Failed to create invoice: Mint failed");

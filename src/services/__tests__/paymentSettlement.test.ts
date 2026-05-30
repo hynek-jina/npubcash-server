@@ -154,14 +154,36 @@ describe("PaymentSettlementService", () => {
       { id: "keyset", amount: 21, secret: "s", C: "c" },
     ]);
 
-    await PaymentSettlementService.getInstance().pollTransactionQuote(
-      "quote-id",
-      0,
-      2,
-    );
+    await PaymentSettlementService.getInstance().pollTransactionQuote(tx as any, 0, 2);
 
     expect(walletMock.mintProofsBolt11).toHaveBeenCalledTimes(1);
     expect(transactionModelMock.setToFulfilled).toHaveBeenCalledWith(1);
+  });
+
+  it("uses the transaction mint wallet for websocket watching and polling", async () => {
+    const tx = transaction();
+    const userMintWallet = {
+      on: {
+        onceMintPaid: vi.fn().mockRejectedValue(new Error("ws unsupported")),
+      },
+      checkMintQuoteBolt11: vi
+        .fn()
+        .mockResolvedValue({ quote: "quote-id", state: "PAID" }),
+      mintProofsBolt11: vi
+        .fn()
+        .mockResolvedValue([{ id: "keyset", amount: 21, secret: "s", C: "c" }]),
+    };
+    getWalletMock.mockReturnValue(userMintWallet);
+    transactionModelMock.getTransactionByQuoteId.mockResolvedValue(tx);
+
+    await PaymentSettlementService.getInstance().watchTransaction(tx as any);
+
+    expect(userMintWallet.on.onceMintPaid).toHaveBeenCalledWith("quote-id", {
+      timeoutMs: 60_000,
+    });
+    expect(userMintWallet.checkMintQuoteBolt11).toHaveBeenCalledWith("quote-id");
+    expect(walletMock.on.onceMintPaid).not.toHaveBeenCalled();
+    expect(walletMock.checkMintQuoteBolt11).not.toHaveBeenCalled();
   });
 
   it("records failed payment state when minting fails", async () => {

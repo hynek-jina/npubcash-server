@@ -4,6 +4,7 @@ import app from "../../app";
 import { getWallet } from "../../config";
 import { Transaction, User } from "../../models";
 import { createLnurlResponse } from "../../utils/lnurl";
+import * as lightningUtils from "../../utils/lightning";
 import { decodeAndValidateZapRequest } from "../../utils/nostr";
 
 vi.mock("../../models/user.ts");
@@ -256,6 +257,55 @@ describe("lnurlController", () => {
     );
     expect(settlementServiceMock.startWatchingTransaction).toHaveBeenCalled();
 
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ pr: "invoice", routes: [] });
+  });
+
+  it("falls back to the direct v1 mint quote endpoint when cashu-ts quote creation fails", async () => {
+    vi.mocked(User.getUserByName, { partial: true }).mockResolvedValue({
+      name: "testUser",
+      mint_url: "https://mint.minibits.cash/Bitcoin",
+      pubkey: "testPubkey...",
+    });
+    const createMintQuoteBolt11 = vi
+      .fn()
+      .mockRejectedValue(new Error("legacy quote path failed"));
+    vi.mocked(getWallet).mockReturnValue({
+      createMintQuote: vi.fn(),
+      createMintQuoteBolt11,
+    });
+    vi.spyOn(lightningUtils, "requestMintQuoteBolt11").mockResolvedValue({
+      expiry: null,
+      quote: "quote-id",
+      request: "invoice",
+    });
+    vi.mocked(Transaction.createCashuTransaction, {
+      partial: true,
+    }).mockResolvedValue({
+      id: 1,
+      mint_pr: "invoice",
+      mint_hash: "quote-id",
+      server_pr: "invoice",
+      server_hash: "quote-id",
+      cashu_quote_id: "quote-id",
+      user: "testUser",
+      zap_request: undefined,
+      amount: 21,
+      fulfilled: false,
+    });
+
+    vi.stubEnv("LNURL_MIN_AMOUNT", "10");
+    vi.stubEnv("LNURL_MAX_AMOUNT", "1000000");
+
+    const res = await request(app).get(
+      "/.well-known/lnurlp/testUser?amount=21000",
+    );
+
+    expect(createMintQuoteBolt11).toHaveBeenCalledWith(21, "Cashu Address");
+    expect(lightningUtils.requestMintQuoteBolt11).toHaveBeenCalledWith({
+      amountSat: 21,
+      mintUrl: "https://mint.minibits.cash/Bitcoin",
+    });
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ pr: "invoice", routes: [] });
   });
