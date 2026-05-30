@@ -27,7 +27,14 @@ export async function lnurlController(
   let zapRequest: Event | undefined;
   if (userParam.startsWith("npub")) {
     try {
-      nip19.decode(userParam as `npub1${string}`);
+      const decoded = nip19.decode(userParam as `npub1${string}`);
+      if (decoded.type !== "npub" || typeof decoded.data !== "string") {
+        throw new Error("Invalid npub / public key");
+      }
+      const userObj = await User.getUserByPubkey(decoded.data);
+      if (userObj?.mint_url) {
+        mintUrl = userObj.mint_url;
+      }
       username = userParam;
     } catch {
       res.status(401);

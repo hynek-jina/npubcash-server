@@ -1,12 +1,13 @@
+import { CheckStateEnum, getEncodedToken, hashToCurve } from "@cashu/cashu-ts";
 import { Request, Response } from "express";
-import {
-  CheckStateEnum,
-  getEncodedToken,
-  hashToCurve,
-} from "@cashu/cashu-ts";
+import { getWallet } from "../config";
 import { Claim, User } from "../models";
 import { WithdrawalStore } from "../models/withdrawal";
-import { wallet } from "../config";
+
+const getClaimMintUrl = (claim: Claim): string => {
+  const mintUrl = String(claim.mint_url ?? "").trim();
+  return mintUrl || process.env.MINTURL!;
+};
 
 export async function balanceController(req: Request, res: Response) {
   const isAuth = req.authData!;
@@ -33,33 +34,61 @@ export async function claimGetController(req: Request, res: Response) {
   if (allClaims.count === 0) {
     return res.json({ error: true, message: "No proofs to claim" });
   }
-  const proofs = allClaims.claims.map((claim) => claim.proof);
-  const payload = {
-    Ys: proofs.map((p) =>
-      hashToCurve(new TextEncoder().encode(p.secret)).toHex(true),
-    ),
-  };
-  const { states } = await wallet.mint.check(payload);
-  const spendableProofs = proofs.filter(
-    (_, i) => states[i]?.state === CheckStateEnum.UNSPENT,
-  );
+
+  const claimsByMint = new Map<string, Claim[]>();
+  for (const claim of allClaims.claims) {
+    const mintUrl = getClaimMintUrl(claim);
+    const existing = claimsByMint.get(mintUrl);
+    if (existing) {
+      existing.push(claim);
+    } else {
+      claimsByMint.set(mintUrl, [claim]);
+    }
+  }
+
+  const tokens: string[] = [];
+  let spendableProofCount = 0;
+  for (const [mintUrl, claims] of claimsByMint.entries()) {
+    const proofs = claims.map((claim) => claim.proof);
+    const payload = {
+      Ys: proofs.map((proof) =>
+        hashToCurve(new TextEncoder().encode(proof.secret)).toHex(true),
+      ),
+    };
+    const wallet = getWallet(mintUrl);
+    const { states } = await wallet.mint.check(payload);
+    const spendableProofs = proofs.filter(
+      (_, index) => states[index]?.state === CheckStateEnum.UNSPENT,
+    );
+    if (spendableProofs.length === 0) {
+      continue;
+    }
+
+    spendableProofCount += spendableProofs.length;
+    tokens.push(
+      getEncodedToken({
+        memo: "",
+        mint: mintUrl,
+        proofs: spendableProofs,
+      }),
+    );
+  }
+
+  if (spendableProofCount === 0) {
+    return res.json({ error: true, message: "No proofs to claim" });
+  }
+
   try {
     await WithdrawalStore.getInstance()?.saveWithdrawal(
       allClaims.claims,
       req.authData!.data.pubkey,
     );
-    const token = getEncodedToken({
-      memo: "",
-      mint: process.env.MINTURL!,
-      proofs: spendableProofs,
-    });
-    if (spendableProofs.length === 0) {
-      return res.json({ error: true, message: "No proofs to claim" });
-    }
+    const singleToken = tokens.length === 1 ? tokens[0] : null;
     res.json({
       error: false,
       data: {
-        token: token,
+        ...(singleToken ? { token: singleToken } : {}),
+        tokens,
         count: allClaims.claims.length,
         totalPending: allClaims.count,
       },
