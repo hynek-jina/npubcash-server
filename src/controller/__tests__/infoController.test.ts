@@ -104,7 +104,7 @@ describe("PUT username", () => {
     vi.mocked(wallet.createMintQuoteBolt11).mockResolvedValueOnce({
       quote: "quote-id",
       request: "invoice",
-      amount: 10,
+      amount: 5000,
       state: "UNPAID",
       expiry: null,
       unit: "sat",
@@ -117,7 +117,7 @@ describe("PUT username", () => {
 
     expect(res.status).toBe(402);
     expect(wallet.createMintQuoteBolt11).toHaveBeenCalledWith(
-      10,
+      5000,
       "Username fee",
     );
     expect(res.body.data.paymentRequest).toBe("invoice");
@@ -156,7 +156,7 @@ describe("PUT username", () => {
     vi.mocked(wallet.createMintQuoteBolt11).mockResolvedValueOnce({
       quote: "quote-id",
       request: "invoice",
-      amount: 10,
+      amount: 5000,
       state: "UNPAID",
       expiry: null,
       unit: "sat",
@@ -191,7 +191,7 @@ describe("PUT username", () => {
     vi.mocked(wallet.createMintQuoteBolt11).mockResolvedValueOnce({
       quote: "quote-id",
       request: "invoice",
-      amount: 10,
+      amount: 5000,
       state: "UNPAID",
       expiry: null,
       unit: "sat",

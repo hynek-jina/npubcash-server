@@ -6,7 +6,7 @@ import { User } from "../models";
 import { PaymentSettlementService } from "../services/paymentSettlement";
 import { PaymentJWTPayload } from "../types";
 
-const DEFAULT_USERNAME_FEE_SATS = 10;
+const DEFAULT_USERNAME_FEE_SATS = 5_000;
 const SPECIAL_USERNAME_FEE_SATS: Readonly<Record<string, number>> = {
   satoshi: 1_000_000,
 };
