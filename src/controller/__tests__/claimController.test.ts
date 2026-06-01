@@ -127,4 +127,177 @@ describe("claimGetController", () => {
       },
     });
   });
+
+  test("persists only spendable claims when some ready claims are already spent", async () => {
+    vi.mocked(User.getUserByPubkey, { partial: true }).mockResolvedValue({
+      pubkey,
+      name: "alice",
+      mint_url: "https://cashu.cz",
+    });
+
+    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+      partial: true,
+    }).mockResolvedValue({
+      claims: [
+        {
+          id: 1,
+          user: "alice",
+          mint_url: "https://cashu.cz",
+          proof: { amount: 10, secret: "secret-spent" },
+          status: "ready",
+        },
+        {
+          id: 2,
+          user: "alice",
+          mint_url: "https://cashu.cz",
+          proof: { amount: 20, secret: "secret-unspent" },
+          status: "ready",
+        },
+      ],
+      count: 2,
+      totalPending: 2,
+    });
+
+    const cashuCheck = vi.fn().mockResolvedValue({
+      states: [{ state: "SPENT" }, { state: "UNSPENT" }],
+    });
+
+    vi.mocked(getWallet).mockReturnValue({ mint: { check: cashuCheck } });
+
+    getEncodedTokenMock.mockReturnValueOnce("cashuAunspentonly");
+
+    const res = await supertest(app)
+      .get("/api/v1/claim")
+      .set("authorization", "validHeader");
+
+    expect(res.status).toBe(200);
+    expect(getEncodedTokenMock).toHaveBeenCalledWith({
+      memo: "",
+      mint: "https://cashu.cz",
+      proofs: [{ amount: 20, secret: "secret-unspent" }],
+    });
+    expect(saveWithdrawalMock).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          id: 2,
+          proof: { amount: 20, secret: "secret-unspent" },
+        }),
+      ],
+      pubkey,
+    );
+    expect(res.body).toEqual({
+      error: false,
+      data: {
+        token: "cashuAunspentonly",
+        tokens: ["cashuAunspentonly"],
+        count: 1,
+        totalPending: 2,
+      },
+    });
+  });
+
+  test("skips a mint group when its proof check fails but still returns other claimable tokens", async () => {
+    vi.mocked(User.getUserByPubkey, { partial: true }).mockResolvedValue({
+      pubkey,
+      name: "alice",
+      mint_url: "https://cashu.cz",
+    });
+
+    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+      partial: true,
+    }).mockResolvedValue({
+      claims: [
+        {
+          id: 1,
+          user: "alice",
+          mint_url: "https://broken-mint.example",
+          proof: { amount: 10, secret: "secret-broken" },
+          status: "ready",
+        },
+        {
+          id: 2,
+          user: "alice",
+          mint_url: "https://cashu.cz",
+          proof: { amount: 20, secret: "secret-ok" },
+          status: "ready",
+        },
+      ],
+      count: 2,
+      totalPending: 2,
+    });
+
+    const brokenCheck = vi.fn().mockRejectedValue(new Error("mint down"));
+    const cashuCheck = vi.fn().mockResolvedValue({
+      states: [{ state: "UNSPENT" }],
+    });
+
+    vi.mocked(getWallet)
+      .mockReturnValueOnce({ mint: { check: brokenCheck } })
+      .mockReturnValueOnce({ mint: { check: cashuCheck } });
+
+    getEncodedTokenMock.mockReturnValueOnce("cashuAok");
+
+    const res = await supertest(app)
+      .get("/api/v1/claim")
+      .set("authorization", "validHeader");
+
+    expect(res.status).toBe(200);
+    expect(saveWithdrawalMock).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          id: 2,
+          mint_url: "https://cashu.cz",
+        }),
+      ],
+      pubkey,
+    );
+    expect(res.body).toEqual({
+      error: false,
+      data: {
+        token: "cashuAok",
+        tokens: ["cashuAok"],
+        count: 1,
+        totalPending: 2,
+      },
+    });
+  });
+
+  test("returns an explicit error when no mint group can be verified", async () => {
+    vi.mocked(User.getUserByPubkey, { partial: true }).mockResolvedValue({
+      pubkey,
+      name: "alice",
+      mint_url: "https://broken-mint.example",
+    });
+
+    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+      partial: true,
+    }).mockResolvedValue({
+      claims: [
+        {
+          id: 1,
+          user: "alice",
+          mint_url: "https://broken-mint.example",
+          proof: { amount: 10, secret: "secret-broken" },
+          status: "ready",
+        },
+      ],
+      count: 1,
+      totalPending: 1,
+    });
+
+    const brokenCheck = vi.fn().mockRejectedValue(new Error("mint down"));
+
+    vi.mocked(getWallet).mockReturnValue({ mint: { check: brokenCheck } });
+
+    const res = await supertest(app)
+      .get("/api/v1/claim")
+      .set("authorization", "validHeader");
+
+    expect(res.status).toBe(502);
+    expect(saveWithdrawalMock).not.toHaveBeenCalled();
+    expect(res.body).toEqual({
+      error: true,
+      message: "Failed to verify claimable proofs",
+    });
+  });
 });
