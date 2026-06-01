@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
-import { Withdrawal, WithdrawalStore } from "../models/withdrawal";
 import { Claim } from "../models";
+import { Withdrawal, WithdrawalStore } from "../models/withdrawal";
 import { queryWrapper } from "../utils/database";
 
 export async function getLatestWithdrawalsController(
