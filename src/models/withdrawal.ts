@@ -24,6 +24,22 @@ export class Withdrawal {
   }
 }
 
+export const sumWithdrawalClaimAmounts = (
+  claims: ReadonlyArray<Pick<Claim, "proof">>,
+): number => {
+  let amount = 0;
+
+  for (const claim of claims) {
+    const claimAmount = Number(claim.proof?.amount ?? 0);
+    if (!Number.isFinite(claimAmount) || claimAmount <= 0) {
+      continue;
+    }
+    amount += Math.trunc(claimAmount);
+  }
+
+  return amount;
+};
+
 export class WithdrawalStore {
   private pool: Pool;
   static instance: WithdrawalStore;
@@ -52,12 +68,29 @@ WITH total_count AS (
   SELECT COUNT(*)::integer AS count
   FROM l_withdrawals
   WHERE pubkey = $1
+),
+latest_withdrawals AS (
+  SELECT
+    l_withdrawals.id,
+    l_withdrawals.claim_ids,
+    l_withdrawals.pubkey,
+    l_withdrawals.created_at,
+    COALESCE(SUM((l_claims_3.proof ->> 'amount')::integer), 0)::integer AS amount
+  FROM l_withdrawals
+  LEFT JOIN LATERAL UNNEST(l_withdrawals.claim_ids) AS claim_id ON true
+  LEFT JOIN l_claims_3 ON l_claims_3.id = claim_id
+  WHERE l_withdrawals.pubkey = $1
+  GROUP BY
+    l_withdrawals.id,
+    l_withdrawals.claim_ids,
+    l_withdrawals.pubkey,
+    l_withdrawals.created_at
+  ORDER BY l_withdrawals.created_at DESC
+  LIMIT 50
 )
-SELECT l_withdrawals.*, total_count.count
-FROM l_withdrawals, total_count 
-WHERE pubkey = $1
-ORDER BY created_at DESC
-LIMIT 50;
+SELECT latest_withdrawals.*, total_count.count
+FROM latest_withdrawals, total_count
+ORDER BY latest_withdrawals.created_at DESC;
 `,
       [pubkey],
     );
@@ -81,12 +114,7 @@ LIMIT 50;
 
   async saveWithdrawal(claims: Claim[], pubkey: string) {
     const client = await this.pool.connect();
-    let amount = 0;
-    let ids: number[] = [];
-    for (let i = 0; i < claims.length; i++) {
-      amount += claims[i].proof.amount;
-      ids.push(claims[i].id);
-    }
+    const amount = sumWithdrawalClaimAmounts(claims);
     try {
       await client.query("BEGIN");
       const ids = claims.map((c) => c.id);

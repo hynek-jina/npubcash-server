@@ -37,6 +37,7 @@ export async function getWithdrawalDetailsController(
     const query = `
 SELECT
     l_withdrawals.*,
+    COALESCE(SUM((l_claims_3.proof ->> 'amount')::integer) OVER (), 0)::integer AS computed_amount,
     l_claims_3.*
 FROM
     l_withdrawals
@@ -58,7 +59,7 @@ AND
     res.status(200).json({
       error: false,
       data: {
-        amount: queryRes.rows[0].amount,
+        amount: queryRes.rows[0].computed_amount,
         mintUrl: queryRes.rows[0].mint_url,
         proofs: queryRes.rows.map((r) => r.proof),
       },
