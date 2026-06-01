@@ -128,6 +128,58 @@ describe("claimGetController", () => {
     });
   });
 
+  test("normalizes trailing slash mint URLs before encoding claim tokens", async () => {
+    vi.mocked(User.getUserByPubkey, { partial: true }).mockResolvedValue({
+      pubkey,
+      name: "alice",
+      mint_url: "https://cashu.cz/",
+    });
+
+    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+      partial: true,
+    }).mockResolvedValue({
+      claims: [
+        {
+          id: 1,
+          user: "alice",
+          mint_url: "https://cashu.cz/",
+          proof: { amount: 20, secret: "secret-1" },
+          status: "ready",
+        },
+      ],
+      count: 1,
+      totalPending: 1,
+    });
+
+    const cashuCheck = vi.fn().mockResolvedValue({
+      states: [{ state: "UNSPENT" }],
+    });
+
+    vi.mocked(getWallet).mockReturnValue({ mint: { check: cashuCheck } });
+    getEncodedTokenMock.mockReturnValueOnce("cashuAcanonical");
+
+    const res = await supertest(app)
+      .get("/api/v1/claim")
+      .set("authorization", "validHeader");
+
+    expect(res.status).toBe(200);
+    expect(getWallet).toHaveBeenCalledWith("https://cashu.cz");
+    expect(getEncodedTokenMock).toHaveBeenCalledWith({
+      memo: "",
+      mint: "https://cashu.cz",
+      proofs: [{ amount: 20, secret: "secret-1" }],
+    });
+    expect(res.body).toEqual({
+      error: false,
+      data: {
+        token: "cashuAcanonical",
+        tokens: ["cashuAcanonical"],
+        count: 1,
+        totalPending: 1,
+      },
+    });
+  });
+
   test("persists only spendable claims when some ready claims are already spent", async () => {
     vi.mocked(User.getUserByPubkey, { partial: true }).mockResolvedValue({
       pubkey,

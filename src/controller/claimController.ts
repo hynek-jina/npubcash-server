@@ -4,9 +4,22 @@ import { getWallet } from "../config";
 import { Claim, User } from "../models";
 import { WithdrawalStore } from "../models/withdrawal";
 
+const normalizeMintUrl = (value: string | null | undefined): string => {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  try {
+    const url = new URL(raw);
+    const pathname = url.pathname.replace(/\/+$/, "");
+    return `${url.origin}${pathname === "/" ? "" : pathname}`;
+  } catch {
+    return raw.replace(/\/+$/, "");
+  }
+};
+
 const getClaimMintUrl = (claim: Claim): string => {
-  const mintUrl = String(claim.mint_url ?? "").trim();
-  return mintUrl || process.env.MINTURL!;
+  const mintUrl = normalizeMintUrl(claim.mint_url);
+  return mintUrl || normalizeMintUrl(process.env.MINTURL!);
 };
 
 export async function balanceController(req: Request, res: Response) {
