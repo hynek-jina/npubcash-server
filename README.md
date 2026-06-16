@@ -55,6 +55,41 @@ npm run dev
 By default the dev server will include the projects landing page on the root domain.
 For more details check out the [documentation](https://docs.cashu-address.com)
 
+## Linky NIP-05 usernames
+
+When a username is claimed through `PUT /api/v1/info/username`, the server
+stores the normalized username together with the authenticated Nostr pubkey.
+The public NIP-05 endpoint then resolves that name:
+
+```text
+GET /.well-known/nostr.json?name=hynek
+```
+
+Example response:
+
+```json
+{
+  "names": {
+    "hynek": "<hex-nostr-pubkey>"
+  },
+  "relays": {
+    "<hex-nostr-pubkey>": ["wss://relay.linky.fit"]
+  }
+}
+```
+
+Set `NIP05_RELAYS` to a comma-separated relay list if you want the `relays`
+field populated:
+
+```sh
+NIP05_RELAYS=wss://relay.linky.fit,wss://relay.damus.io
+```
+
+For `linky.fit`, the public site can proxy `/.well-known/nostr.json` to this
+server, so the DNS/domain requirement is simply that `https://linky.fit` serves
+that well-known route and forwards the `name` query parameter to
+`https://npub.linky.fit/.well-known/nostr.json`.
+
 ## Roadmap
 
 - [x] Implement basic API

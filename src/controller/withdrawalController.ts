@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { Claim } from "../models";
 import { Withdrawal, WithdrawalStore } from "../models/withdrawal";
+import { encodeCashuToken, normalizeMintUrl } from "../utils/cashuToken";
 import { queryWrapper } from "../utils/database";
 
 export async function getLatestWithdrawalsController(
@@ -54,14 +55,42 @@ AND
       authData.data.pubkey,
     ]);
     if (queryRes.rowCount === 0) {
-      res.status(404).json({ error: true, message: "not found" });
+      return res.status(404).json({ error: true, message: "not found" });
     }
+    const claimsByMint = new Map<string, Claim[]>();
+    for (const claim of queryRes.rows) {
+      const mintUrl =
+        normalizeMintUrl(claim.mint_url) || normalizeMintUrl(process.env.MINTURL);
+      const claims = claimsByMint.get(mintUrl);
+      if (claims) {
+        claims.push(claim);
+      } else {
+        claimsByMint.set(mintUrl, [claim]);
+      }
+    }
+    const tokens = Array.from(claimsByMint.entries()).map(
+      ([mintUrl, claims]) => ({
+        mintUrl,
+        token: encodeCashuToken(
+          mintUrl,
+          claims.map((claim) => claim.proof),
+        ),
+        proofs: claims.map((claim) => claim.proof),
+      }),
+    );
+    const singleToken = tokens.length === 1 ? tokens[0] : null;
     res.status(200).json({
       error: false,
       data: {
         amount: queryRes.rows[0].computed_amount,
-        mintUrl: queryRes.rows[0].mint_url,
-        proofs: queryRes.rows.map((r) => r.proof),
+        ...(singleToken
+          ? {
+              mintUrl: singleToken.mintUrl,
+              proofs: singleToken.proofs,
+              token: singleToken.token,
+            }
+          : {}),
+        tokens,
       },
     });
   } catch (e) {
