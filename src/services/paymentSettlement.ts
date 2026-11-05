@@ -40,7 +40,8 @@ export class PaymentSettlementService {
       return;
     }
 
-    await walletInstance.loadMint();
+    await walletInstance.loadMint(true);
+    walletInstance.bindKeyset(walletInstance.keyChain.getCheapestKeyset().id);
   }
 
   static getInstance() {

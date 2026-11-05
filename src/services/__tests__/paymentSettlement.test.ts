@@ -4,6 +4,8 @@ import { PaymentSettlementService } from "../paymentSettlement";
 
 const walletMock = vi.hoisted(() => ({
   loadMint: vi.fn(),
+  bindKeyset: vi.fn(),
+  keyChain: { getCheapestKeyset: () => ({ id: "active-keyset" }) },
   on: {
     onceMintPaid: vi.fn(),
   },
@@ -174,6 +176,8 @@ describe("PaymentSettlementService", () => {
     const tx = transaction();
     const userMintWallet = {
       loadMint: vi.fn().mockResolvedValue(undefined),
+      bindKeyset: vi.fn(),
+      keyChain: { getCheapestKeyset: () => ({ id: "active-keyset" }) },
       on: {
         onceMintPaid: vi.fn().mockRejectedValue(new Error("ws unsupported")),
       },
@@ -204,6 +208,8 @@ describe("PaymentSettlementService", () => {
     const tx = transaction();
     const userMintWallet = {
       loadMint: vi.fn().mockResolvedValue(undefined),
+      bindKeyset: vi.fn(),
+      keyChain: { getCheapestKeyset: () => ({ id: "active-keyset" }) },
       on: {
         onceMintPaid: vi.fn().mockRejectedValue(new Error("ws unsupported")),
       },
@@ -259,7 +265,7 @@ describe("PaymentSettlementService", () => {
     expect(transactionModelMock.setToFulfilled).not.toHaveBeenCalled();
   });
 
-  it("mints and stores service revenue proofs for a paid username quote", async () => {
+  it("mints service revenue proofs on the mint's current keyset for a paid username quote", async () => {
     const proofs = [{ id: "keyset", amount: 10, secret: "s", C: "c" }];
     serviceRevenueClaimMock.getClaimsByQuoteId.mockResolvedValue([]);
     walletMock.loadMint.mockResolvedValue(undefined);
@@ -277,7 +283,8 @@ describe("PaymentSettlementService", () => {
       );
 
     expect(paid).toBe(true);
-    expect(walletMock.loadMint).toHaveBeenCalled();
+    expect(walletMock.loadMint).toHaveBeenCalledWith(true);
+    expect(walletMock.bindKeyset).toHaveBeenCalledWith("active-keyset");
     expect(serviceRevenueClaimMock.createClaims).toHaveBeenCalledWith(
       "quote-id",
       "invoice",

@@ -216,6 +216,35 @@ describe("PUT username", () => {
     expect(res.status).toBe(402);
     expect(res.body).toEqual({ error: true, message: "Invoice unpaid..." });
   });
+  test("should return 500 instead of crashing if settlement throws", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.mocked(wallet.createMintQuoteBolt11).mockResolvedValueOnce({
+      quote: "quote-id",
+      request: "invoice",
+      amount: 5000,
+      state: "UNPAID",
+      expiry: null,
+      unit: "sat",
+    });
+    const first = await supertest(app)
+      .put("/api/v1/info/username")
+      .send({ username: "testUser" })
+      .set("authorization", "validHeader");
+
+    settlementServiceMock.settleServiceRevenueQuote.mockRejectedValueOnce(
+      new Error("keyset is inactive, cannot sign messages"),
+    );
+
+    const res = await supertest(app)
+      .put("/api/v1/info/username")
+      .send({
+        username: "testUser",
+        paymentToken: first.body.data.paymentToken,
+      })
+      .set("authorization", "validHeader");
+
+    expect(res.status).toBe(500);
+  });
 });
 
 describe("GET /info ", () => {
