@@ -4,6 +4,7 @@ import { getWallet } from "../config";
 import { Claim, User } from "../models";
 import { WithdrawalStore } from "../models/withdrawal";
 import { encodeCashuToken, normalizeMintUrl } from "../utils/cashuToken";
+import { withTransaction } from "../utils/database";
 
 const getClaimMintUrl = (claim: Claim): string => {
   const mintUrl = normalizeMintUrl(claim.mint_url);
@@ -25,66 +26,95 @@ export async function balanceController(req: Request, res: Response) {
   }
 }
 
+const MAX_HANDOUT_PROOFS = 100;
+const CHECK_BATCH_SIZE = 100;
+
+const groupByMint = (claims: Claim[]) => {
+  const groups = new Map<string, Claim[]>();
+  for (const claim of claims) {
+    const mintUrl = getClaimMintUrl(claim);
+    groups.set(mintUrl, [...(groups.get(mintUrl) ?? []), claim]);
+  }
+  return groups;
+};
+
+async function findUnspentClaims(candidates: Claim[]) {
+  const unspent: Claim[] = [];
+  const spentIds: number[] = [];
+  const failedMintUrls = new Set<string>();
+  const neverOffered = candidates.filter((claim) => claim.status === "ready");
+  const offered = candidates.filter((claim) => claim.status !== "ready");
+
+  for (const group of [neverOffered, offered]) {
+    for (const [mintUrl, claims] of groupByMint(group)) {
+      if (failedMintUrls.has(mintUrl)) {
+        continue;
+      }
+      const wallet = getWallet(mintUrl);
+      for (
+        let i = 0;
+        i < claims.length && unspent.length < MAX_HANDOUT_PROOFS;
+        i += CHECK_BATCH_SIZE
+      ) {
+        const batch = claims.slice(i, i + CHECK_BATCH_SIZE);
+        try {
+          const { states } = await wallet.mint.check({
+            Ys: batch.map((claim) =>
+              hashToCurve(new TextEncoder().encode(claim.proof.secret)).toHex(
+                true,
+              ),
+            ),
+          });
+          const withState = (state: CheckStateEnum) =>
+            batch.filter((_, index) => states[index]?.state === state);
+          spentIds.push(
+            ...withState(CheckStateEnum.SPENT).map((claim) => claim.id),
+          );
+          unspent.push(
+            ...withState(CheckStateEnum.UNSPENT).slice(
+              0,
+              MAX_HANDOUT_PROOFS - unspent.length,
+            ),
+          );
+        } catch (error) {
+          failedMintUrls.add(mintUrl);
+          console.warn("Failed to verify claim proofs for mint", {
+            error,
+            mintUrl,
+            claimIds: batch.map((claim) => claim.id),
+          });
+          break;
+        }
+      }
+    }
+  }
+  return { unspent, spentIds, failedMintUrls };
+}
+
 export async function claimGetController(req: Request, res: Response) {
   try {
-    const user = await User.getUserByPubkey(req.authData!.data.pubkey);
-    const allClaims = await Claim.getPaginatedUserReadyClaims(
-      1,
-      req.authData!.data.npub,
-      user?.name,
-    );
-    if (allClaims.count === 0) {
-      return res.json({ error: true, message: "No proofs to claim" });
-    }
-
-    const claimsByMint = new Map<string, Claim[]>();
-    for (const claim of allClaims.claims) {
-      const mintUrl = getClaimMintUrl(claim);
-      const existing = claimsByMint.get(mintUrl);
-      if (existing) {
-        existing.push(claim);
-      } else {
-        claimsByMint.set(mintUrl, [claim]);
-      }
-    }
-
-    const tokens: string[] = [];
-    const claimedClaims: Claim[] = [];
-    const failedMintUrls = new Set<string>();
-    let spendableProofCount = 0;
-
-    for (const [mintUrl, claims] of claimsByMint.entries()) {
-      try {
-        const proofs = claims.map((claim) => claim.proof);
-        const payload = {
-          Ys: proofs.map((proof) =>
-            hashToCurve(new TextEncoder().encode(proof.secret)).toHex(true),
-          ),
-        };
-        const wallet = getWallet(mintUrl);
-        const { states } = await wallet.mint.check(payload);
-        const spendableClaims = claims.filter(
-          (_, index) => states[index]?.state === CheckStateEnum.UNSPENT,
+    const { pubkey, npub } = req.authData!.data;
+    const user = await User.getUserByPubkey(pubkey);
+    const { candidateCount, unspent, failedMintUrls } = await withTransaction(
+      async (client) => {
+        const candidates = await Claim.lockClaimableClaims(
+          client,
+          user?.name ? [npub, user.name] : [npub],
         );
-        const spendableProofs = spendableClaims.map((claim) => claim.proof);
-        if (spendableProofs.length === 0) {
-          continue;
+        const found = await findUnspentClaims(candidates);
+        await Claim.markClaimsSpent(client, found.spentIds);
+        if (found.unspent.length > 0) {
+          await WithdrawalStore.getInstance().saveWithdrawal(
+            client,
+            found.unspent,
+            pubkey,
+          );
         }
+        return { ...found, candidateCount: candidates.length };
+      },
+    );
 
-        claimedClaims.push(...spendableClaims);
-        spendableProofCount += spendableProofs.length;
-        tokens.push(encodeCashuToken(mintUrl, spendableProofs));
-      } catch (error) {
-        failedMintUrls.add(mintUrl);
-        console.warn("Failed to verify claim proofs for mint", {
-          error,
-          mintUrl,
-          claimIds: claims.map((claim) => claim.id),
-        });
-      }
-    }
-
-    if (spendableProofCount === 0) {
+    if (unspent.length === 0) {
       if (failedMintUrls.size > 0) {
         return res.status(502).json({
           error: true,
@@ -94,9 +124,11 @@ export async function claimGetController(req: Request, res: Response) {
       return res.json({ error: true, message: "No proofs to claim" });
     }
 
-    await WithdrawalStore.getInstance()?.saveWithdrawal(
-      claimedClaims,
-      req.authData!.data.pubkey,
+    const tokens = [...groupByMint(unspent)].map(([mintUrl, claims]) =>
+      encodeCashuToken(
+        mintUrl,
+        claims.map((claim) => claim.proof),
+      ),
     );
     const singleToken = tokens.length === 1 ? tokens[0] : null;
     res.json({
@@ -104,8 +136,8 @@ export async function claimGetController(req: Request, res: Response) {
       data: {
         ...(singleToken ? { token: singleToken } : {}),
         tokens,
-        count: spendableProofCount,
-        totalPending: allClaims.count,
+        count: unspent.length,
+        totalPending: candidateCount,
       },
     });
   } catch (e) {

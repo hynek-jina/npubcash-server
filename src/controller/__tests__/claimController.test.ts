@@ -33,6 +33,11 @@ vi.mock("../../models/withdrawal", () => ({
   },
 }));
 
+const dbClient = vi.hoisted(() => ({ query: vi.fn() }));
+vi.mock("../../utils/database", () => ({
+  withTransaction: vi.fn((run) => run(dbClient)),
+}));
+
 vi.mock("../../config", () => ({
   getWallet: vi.fn(),
 }));
@@ -59,28 +64,24 @@ describe("claimGetController", () => {
       mint_url: "https://minibits.cash/Bitcoin",
     });
 
-    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+    vi.mocked(Claim.lockClaimableClaims, {
       partial: true,
-    }).mockResolvedValue({
-      claims: [
-        {
-          id: 1,
-          user: "alice",
-          mint_url: "https://minibits.cash/Bitcoin",
-          proof: { amount: 10, secret: "secret-1" },
-          status: "ready",
-        },
-        {
-          id: 2,
-          user: npub,
-          mint_url: "https://cashu.cz",
-          proof: { amount: 20, secret: "secret-2" },
-          status: "ready",
-        },
-      ],
-      count: 2,
-      totalPending: 2,
-    });
+    }).mockResolvedValue([
+      {
+        id: 1,
+        user: "alice",
+        mint_url: "https://minibits.cash/Bitcoin",
+        proof: { amount: 10, secret: "secret-1" },
+        status: "ready",
+      },
+      {
+        id: 2,
+        user: npub,
+        mint_url: "https://cashu.cz",
+        proof: { amount: 20, secret: "secret-2" },
+        status: "ready",
+      },
+    ]);
 
     const minibitsCheck = vi.fn().mockResolvedValue({
       states: [{ state: "UNSPENT" }],
@@ -135,21 +136,17 @@ describe("claimGetController", () => {
       mint_url: "https://cashu.cz/",
     });
 
-    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+    vi.mocked(Claim.lockClaimableClaims, {
       partial: true,
-    }).mockResolvedValue({
-      claims: [
-        {
-          id: 1,
-          user: "alice",
-          mint_url: "https://cashu.cz/",
-          proof: { amount: 20, secret: "secret-1" },
-          status: "ready",
-        },
-      ],
-      count: 1,
-      totalPending: 1,
-    });
+    }).mockResolvedValue([
+      {
+        id: 1,
+        user: "alice",
+        mint_url: "https://cashu.cz/",
+        proof: { amount: 20, secret: "secret-1" },
+        status: "ready",
+      },
+    ]);
 
     const cashuCheck = vi.fn().mockResolvedValue({
       states: [{ state: "UNSPENT" }],
@@ -187,28 +184,24 @@ describe("claimGetController", () => {
       mint_url: "https://cashu.cz",
     });
 
-    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+    vi.mocked(Claim.lockClaimableClaims, {
       partial: true,
-    }).mockResolvedValue({
-      claims: [
-        {
-          id: 1,
-          user: "alice",
-          mint_url: "https://cashu.cz",
-          proof: { amount: 10, secret: "secret-spent" },
-          status: "ready",
-        },
-        {
-          id: 2,
-          user: "alice",
-          mint_url: "https://cashu.cz",
-          proof: { amount: 20, secret: "secret-unspent" },
-          status: "ready",
-        },
-      ],
-      count: 2,
-      totalPending: 2,
-    });
+    }).mockResolvedValue([
+      {
+        id: 1,
+        user: "alice",
+        mint_url: "https://cashu.cz",
+        proof: { amount: 10, secret: "secret-spent" },
+        status: "ready",
+      },
+      {
+        id: 2,
+        user: "alice",
+        mint_url: "https://cashu.cz",
+        proof: { amount: 20, secret: "secret-unspent" },
+        status: "ready",
+      },
+    ]);
 
     const cashuCheck = vi.fn().mockResolvedValue({
       states: [{ state: "SPENT" }, { state: "UNSPENT" }],
@@ -229,6 +222,7 @@ describe("claimGetController", () => {
       proofs: [{ amount: 20, secret: "secret-unspent" }],
     });
     expect(saveWithdrawalMock).toHaveBeenCalledWith(
+      dbClient,
       [
         expect.objectContaining({
           id: 2,
@@ -237,6 +231,7 @@ describe("claimGetController", () => {
       ],
       pubkey,
     );
+    expect(Claim.markClaimsSpent).toHaveBeenCalledWith(dbClient, [1]);
     expect(res.body).toEqual({
       error: false,
       data: {
@@ -255,28 +250,24 @@ describe("claimGetController", () => {
       mint_url: "https://cashu.cz",
     });
 
-    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+    vi.mocked(Claim.lockClaimableClaims, {
       partial: true,
-    }).mockResolvedValue({
-      claims: [
-        {
-          id: 1,
-          user: "alice",
-          mint_url: "https://broken-mint.example",
-          proof: { amount: 10, secret: "secret-broken" },
-          status: "ready",
-        },
-        {
-          id: 2,
-          user: "alice",
-          mint_url: "https://cashu.cz",
-          proof: { amount: 20, secret: "secret-ok" },
-          status: "ready",
-        },
-      ],
-      count: 2,
-      totalPending: 2,
-    });
+    }).mockResolvedValue([
+      {
+        id: 1,
+        user: "alice",
+        mint_url: "https://broken-mint.example",
+        proof: { amount: 10, secret: "secret-broken" },
+        status: "ready",
+      },
+      {
+        id: 2,
+        user: "alice",
+        mint_url: "https://cashu.cz",
+        proof: { amount: 20, secret: "secret-ok" },
+        status: "ready",
+      },
+    ]);
 
     const brokenCheck = vi.fn().mockRejectedValue(new Error("mint down"));
     const cashuCheck = vi.fn().mockResolvedValue({
@@ -295,6 +286,7 @@ describe("claimGetController", () => {
 
     expect(res.status).toBe(200);
     expect(saveWithdrawalMock).toHaveBeenCalledWith(
+      dbClient,
       [
         expect.objectContaining({
           id: 2,
@@ -321,21 +313,17 @@ describe("claimGetController", () => {
       mint_url: "https://broken-mint.example",
     });
 
-    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+    vi.mocked(Claim.lockClaimableClaims, {
       partial: true,
-    }).mockResolvedValue({
-      claims: [
-        {
-          id: 1,
-          user: "alice",
-          mint_url: "https://broken-mint.example",
-          proof: { amount: 10, secret: "secret-broken" },
-          status: "ready",
-        },
-      ],
-      count: 1,
-      totalPending: 1,
-    });
+    }).mockResolvedValue([
+      {
+        id: 1,
+        user: "alice",
+        mint_url: "https://broken-mint.example",
+        proof: { amount: 10, secret: "secret-broken" },
+        status: "ready",
+      },
+    ]);
 
     const brokenCheck = vi.fn().mockRejectedValue(new Error("mint down"));
 
@@ -351,5 +339,71 @@ describe("claimGetController", () => {
       error: true,
       message: "Failed to verify claimable proofs",
     });
+  });
+
+  const claimsWith = (ids: number[], status: "ready" | "inflight") =>
+    ids.map((id) => ({
+      id,
+      user: npub,
+      mint_url: "https://cashu.cz",
+      proof: { amount: 1, secret: `secret-${id}` },
+      status,
+    }));
+  const range = (from: number, to: number) =>
+    Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
+  test("checks rows past the first 100 when those are all spent", async () => {
+    vi.mocked(User.getUserByPubkey).mockResolvedValue(null);
+    vi.mocked(Claim.lockClaimableClaims, { partial: true }).mockResolvedValue(
+      claimsWith(range(1, 150), "inflight"),
+    );
+    const cashuCheck = vi
+      .fn()
+      .mockResolvedValueOnce({
+        states: range(1, 100).map(() => ({ state: "SPENT" })),
+      })
+      .mockResolvedValueOnce({
+        states: range(1, 50).map(() => ({ state: "UNSPENT" })),
+      });
+    vi.mocked(getWallet).mockReturnValue({ mint: { check: cashuCheck } });
+    getEncodedTokenMock.mockReturnValueOnce("cashuArest");
+
+    const res = await supertest(app)
+      .get("/api/v1/claim")
+      .set("authorization", "validHeader");
+
+    expect(cashuCheck).toHaveBeenCalledTimes(2);
+    expect(Claim.markClaimsSpent).toHaveBeenCalledWith(dbClient, range(1, 100));
+    expect(saveWithdrawalMock).toHaveBeenCalledWith(
+      dbClient,
+      claimsWith(range(101, 150), "inflight"),
+      pubkey,
+    );
+    expect(res.body.data.count).toBe(50);
+  });
+
+  test("hands out never-offered rows before re-offering handed-out ones", async () => {
+    vi.mocked(User.getUserByPubkey).mockResolvedValue(null);
+    vi.mocked(Claim.lockClaimableClaims, { partial: true }).mockResolvedValue([
+      ...claimsWith([0], "inflight"),
+      ...claimsWith(range(1, 100), "ready"),
+    ]);
+    const cashuCheck = vi.fn(async ({ Ys }: { Ys: string[] }) => ({
+      states: Ys.map(() => ({ state: "UNSPENT" })),
+    }));
+    vi.mocked(getWallet).mockReturnValue({ mint: { check: cashuCheck } });
+    getEncodedTokenMock.mockReturnValueOnce("cashuAfresh");
+
+    const res = await supertest(app)
+      .get("/api/v1/claim")
+      .set("authorization", "validHeader");
+
+    expect(cashuCheck).toHaveBeenCalledTimes(1);
+    expect(saveWithdrawalMock).toHaveBeenCalledWith(
+      dbClient,
+      claimsWith(range(1, 100), "ready"),
+      pubkey,
+    );
+    expect(res.body.data.count).toBe(100);
   });
 });

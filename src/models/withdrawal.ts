@@ -1,5 +1,4 @@
-import { Pool } from "pg";
-import { createSanitizedValueString } from "../utils/database";
+import { Pool, PoolClient } from "pg";
 import { Claim } from "./claim";
 
 export class Withdrawal {
@@ -112,28 +111,15 @@ ORDER BY latest_withdrawals.created_at DESC;
     };
   }
 
-  async saveWithdrawal(claims: Claim[], pubkey: string) {
-    const client = await this.pool.connect();
-    const amount = sumWithdrawalClaimAmounts(claims);
-    try {
-      await client.query("BEGIN");
-      const ids = claims.map((c) => c.id);
-      const withDrawalInsertQuery = `INSERT INTO l_withdrawals (amount, pubkey, claim_ids) VALUES ($1, $2, $3)`;
-      const res1 = await client.query(withDrawalInsertQuery, [
-        amount,
-        pubkey,
-        ids,
-      ]);
-      const list = createSanitizedValueString(ids.length);
-      const claimUpdateQuery = `UPDATE l_claims_3 SET status = 'spent' WHERE id in ${list}`;
-      const res2 = await client.query(claimUpdateQuery, ids);
-      await client.query("COMMIT");
-    } catch (e) {
-      console.warn("Failed to create withdrawl... rolling back");
-      client.query("ROLLBACK");
-      throw e;
-    } finally {
-      client.release();
-    }
+  async saveWithdrawal(client: PoolClient, claims: Claim[], pubkey: string) {
+    const ids = claims.map((c) => c.id);
+    await client.query(
+      `INSERT INTO l_withdrawals (amount, pubkey, claim_ids) VALUES ($1, $2, $3)`,
+      [sumWithdrawalClaimAmounts(claims), pubkey, ids],
+    );
+    await client.query(
+      `UPDATE l_claims_3 SET status = 'inflight', handed_out_at = now() WHERE id = ANY($1)`,
+      [ids],
+    );
   }
 }

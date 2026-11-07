@@ -1,9 +1,13 @@
 import { Proof } from "@cashu/cashu-ts";
+import { PoolClient } from "pg";
 import {
   createBulkInsertQuery,
   createSanitizedValueString,
   queryWrapper,
 } from "../utils/database";
+
+// Handed-out proofs come back after a grace period; the mint check before each handout keeps re-offers single-spend.
+const CLAIMABLE_STATUS = `(status = 'ready' OR (status = 'inflight' AND (handed_out_at IS NULL OR handed_out_at < now() - interval '5 minutes')))`;
 
 export class Claim {
   id: number;
@@ -71,50 +75,24 @@ export class Claim {
     return res.rows[0].total_amount;
   }
 
-  static async getPaginatedUserReadyClaims(
-    page: number,
-    npub: string,
-    username?: string,
-  ) {
-    const offset = (page - 1) * 100;
-    const whereClause = username
-      ? `WHERE ("user" = $1 OR "user" = $2) AND status = 'ready'`
-      : `WHERE "user" = $1 AND status = 'ready'`;
-    const query = `
-WITH total_count AS (
-    SELECT COUNT(*) AS count
-    FROM l_claims_3
-    ${whereClause}
-)
-SELECT l_claims_3.*, total_count.count
-FROM l_claims_3, total_count
-${whereClause}
+  static async lockClaimableClaims(client: PoolClient, users: string[]) {
+    const res = await client.query<Claim>(
+      `SELECT * FROM l_claims_3 WHERE "user" = ANY($1) AND ${CLAIMABLE_STATUS}
 ORDER BY (proof->>'amount')::int DESC
-LIMIT 100
-OFFSET ${username ? "$3" : "$2"};
-`;
-    const res = await queryWrapper<Claim & { count: number }>(
-      query,
-      username ? [npub, username, offset] : [npub, offset],
+FOR UPDATE SKIP LOCKED`,
+      [users],
     );
-    if (res.rowCount === 0) {
-      return { claims: [], count: 0, totalPending: 0 };
+    return res.rows;
+  }
+
+  static async markClaimsSpent(client: PoolClient, ids: number[]) {
+    if (ids.length === 0) {
+      return;
     }
-    return {
-      claims: res.rows.map(
-        (row) =>
-          new Claim(
-            row.id,
-            row.user,
-            row.mint_url,
-            row.proof,
-            row.status,
-            row.transaction_id,
-          ),
-      ),
-      count: res.rowCount,
-      totalPending: res.rows[0].count,
-    };
+    await client.query(
+      `UPDATE l_claims_3 SET status = 'spent' WHERE id = ANY($1)`,
+      [ids],
+    );
   }
 
   static async getAllUserReadyClaims(npub: string, username?: string) {
