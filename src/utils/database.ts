@@ -1,4 +1,4 @@
-import { Pool, QueryConfig, QueryResultRow } from "pg";
+import { Pool, PoolClient, QueryConfig, QueryResultRow } from "pg";
 import migrate from "node-pg-migrate";
 import path from "path";
 import { WithdrawalStore } from "../models/withdrawal";
@@ -26,6 +26,23 @@ export async function setupDatabase() {
 
 export async function getDbClient() {
   return await pool.connect();
+}
+
+export async function withTransaction<T>(
+  run: (client: PoolClient) => Promise<T>,
+) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await run(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (e) {
+    await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
 }
 
 export function queryWrapper<T extends QueryResultRow>(
