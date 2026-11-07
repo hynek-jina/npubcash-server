@@ -5,6 +5,9 @@ import {
   queryWrapper,
 } from "../utils/database";
 
+// Handed-out proofs come back after a grace period; the mint check before each handout keeps re-offers single-spend.
+const CLAIMABLE_STATUS = `(status = 'ready' OR (status = 'inflight' AND (handed_out_at IS NULL OR handed_out_at < now() - interval '5 minutes')))`;
+
 export class Claim {
   id: number;
   user: string;
@@ -71,15 +74,15 @@ export class Claim {
     return res.rows[0].total_amount;
   }
 
-  static async getPaginatedUserReadyClaims(
+  static async getPaginatedUserClaimableClaims(
     page: number,
     npub: string,
     username?: string,
   ) {
     const offset = (page - 1) * 100;
     const whereClause = username
-      ? `WHERE ("user" = $1 OR "user" = $2) AND status = 'ready'`
-      : `WHERE "user" = $1 AND status = 'ready'`;
+      ? `WHERE ("user" = $1 OR "user" = $2) AND ${CLAIMABLE_STATUS}`
+      : `WHERE "user" = $1 AND ${CLAIMABLE_STATUS}`;
     const query = `
 WITH total_count AS (
     SELECT COUNT(*) AS count

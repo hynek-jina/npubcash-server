@@ -28,7 +28,7 @@ export async function balanceController(req: Request, res: Response) {
 export async function claimGetController(req: Request, res: Response) {
   try {
     const user = await User.getUserByPubkey(req.authData!.data.pubkey);
-    const allClaims = await Claim.getPaginatedUserReadyClaims(
+    const allClaims = await Claim.getPaginatedUserClaimableClaims(
       1,
       req.authData!.data.npub,
       user?.name,
@@ -50,6 +50,7 @@ export async function claimGetController(req: Request, res: Response) {
 
     const tokens: string[] = [];
     const claimedClaims: Claim[] = [];
+    const spentClaimIds: number[] = [];
     const failedMintUrls = new Set<string>();
     let spendableProofCount = 0;
 
@@ -63,6 +64,11 @@ export async function claimGetController(req: Request, res: Response) {
         };
         const wallet = getWallet(mintUrl);
         const { states } = await wallet.mint.check(payload);
+        spentClaimIds.push(
+          ...claims
+            .filter((_, index) => states[index]?.state === CheckStateEnum.SPENT)
+            .map((claim) => claim.id),
+        );
         const spendableClaims = claims.filter(
           (_, index) => states[index]?.state === CheckStateEnum.UNSPENT,
         );
@@ -83,6 +89,8 @@ export async function claimGetController(req: Request, res: Response) {
         });
       }
     }
+
+    await Claim.updateClaimsStatus(spentClaimIds);
 
     if (spendableProofCount === 0) {
       if (failedMintUrls.size > 0) {

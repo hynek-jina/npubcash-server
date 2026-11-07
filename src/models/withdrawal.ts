@@ -125,7 +125,7 @@ ORDER BY latest_withdrawals.created_at DESC;
         ids,
       ]);
       const list = createSanitizedValueString(ids.length);
-      const claimUpdateQuery = `UPDATE l_claims_3 SET status = 'spent' WHERE id in ${list}`;
+      const claimUpdateQuery = `UPDATE l_claims_3 SET status = 'inflight', handed_out_at = now() WHERE id in ${list}`;
       const res2 = await client.query(claimUpdateQuery, ids);
       await client.query("COMMIT");
     } catch (e) {
