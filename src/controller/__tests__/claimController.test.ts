@@ -59,7 +59,7 @@ describe("claimGetController", () => {
       mint_url: "https://minibits.cash/Bitcoin",
     });
 
-    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+    vi.mocked(Claim.getPaginatedUserClaimableClaims, {
       partial: true,
     }).mockResolvedValue({
       claims: [
@@ -135,7 +135,7 @@ describe("claimGetController", () => {
       mint_url: "https://cashu.cz/",
     });
 
-    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+    vi.mocked(Claim.getPaginatedUserClaimableClaims, {
       partial: true,
     }).mockResolvedValue({
       claims: [
@@ -187,7 +187,7 @@ describe("claimGetController", () => {
       mint_url: "https://cashu.cz",
     });
 
-    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+    vi.mocked(Claim.getPaginatedUserClaimableClaims, {
       partial: true,
     }).mockResolvedValue({
       claims: [
@@ -237,6 +237,7 @@ describe("claimGetController", () => {
       ],
       pubkey,
     );
+    expect(Claim.updateClaimsStatus).toHaveBeenCalledWith([1]);
     expect(res.body).toEqual({
       error: false,
       data: {
@@ -255,7 +256,7 @@ describe("claimGetController", () => {
       mint_url: "https://cashu.cz",
     });
 
-    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+    vi.mocked(Claim.getPaginatedUserClaimableClaims, {
       partial: true,
     }).mockResolvedValue({
       claims: [
@@ -321,7 +322,7 @@ describe("claimGetController", () => {
       mint_url: "https://broken-mint.example",
     });
 
-    vi.mocked(Claim.getPaginatedUserReadyClaims, {
+    vi.mocked(Claim.getPaginatedUserClaimableClaims, {
       partial: true,
     }).mockResolvedValue({
       claims: [
